@@ -1,0 +1,100 @@
+---
+- name: Install Nexus Repository Manager
+  hosts: nexus
+  become: yes
+  tasks:
+
+    - name: Install required packages
+      apt:
+        name:
+          - openjdk-17-jdk
+          - wget
+          - unzip
+          - firewalld
+        state: present
+        update_cache: yes
+
+    - name: Ensure firewalld is running
+      systemd:
+        name: firewalld
+        state: started
+        enabled: true
+
+    - name: Open port 8081 in the firewall
+      firewalld:
+        port: 8081/tcp
+        permanent: true
+        state: enabled
+        immediate: yes
+
+    - name: Download Nexus 3.87.1-01
+      get_url:
+        url: https://download.sonatype.com/nexus/3/nexus-3.87.1-01-linux-x86_64.tar.gz
+        dest: /opt/nexus.tar.gz
+
+    - name: Extract Nexus
+      unarchive:
+        src: /opt/nexus.tar.gz
+        dest: /opt/
+        remote_src: yes
+        creates: /opt/nexus-3.87.1-01
+
+    - name: Create symlink to nexus
+      file:
+        src: /opt/nexus-3.87.1-01
+        dest: /opt/nexus
+        state: link
+
+    - name: Create Nexus data directory
+      file:
+        path: /opt/sonatype-work
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Configure Nexus VM options
+      copy:
+        dest: /opt/nexus/bin/nexus.vmoptions
+        content: |
+          -Xms2703m
+          -Xmx2703m
+          -XX:MaxDirectMemorySize=2703m
+          -XX:+UnlockDiagnosticVMOptions
+          -XX:+LogVMOutput
+          -XX:LogFile=../sonatype-work/nexus3/log/jvm.log
+          -XX:+HeapDumpOnOutOfMemoryError
+          -XX:-OmitStackTraceInFastThrow
+          -Dkaraf.data=/opt/sonatype-work
+          -Djava.util.logging.config.file=etc/logging.properties
+          -Djava.util.logging.manager=org.apache.juli.ClassLoaderLogManager
+
+    - name: Create Nexus systemd service
+      copy:
+        dest: /etc/systemd/system/nexus.service
+        content: |
+          [Unit]
+          Description=Nexus Repository Manager
+          After=network.target
+
+          [Service]
+          Type=forking
+          LimitNOFILE=65536
+          ExecStart=/opt/nexus/bin/nexus start
+          ExecStop=/opt/nexus/bin/nexus stop
+          User=root
+          Restart=on-abort
+          TimeoutSec=600
+
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: Reload systemd
+      systemd:
+        daemon_reload: yes
+
+    - name: Enable and start Nexus service
+      systemd:
+        name: nexus
+        state: started
+        enabled: yes
